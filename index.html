@@ -734,6 +734,27 @@
           <div id="arch-list" class="stack" style="gap:8px"></div>
         </div>
 
+        <!-- 新增：记录导出与数据备份恢复 -->
+        <div class="card stack" style="gap:10px">
+          <div class="row">
+            <div>
+              <div class="sec-t">记录导出与数据备份</div>
+              <div class="sec-s">备份自封胶囊、倾诉记录、蓝图打卡与誓约（不含 API 密钥）</div>
+            </div>
+            <span class="pill">防丢失</span>
+          </div>
+          <div class="g2">
+            <button id="btn-exp-txt" type="button" class="btn gold">导出文字纪念册</button>
+            <button id="btn-exp-json" type="button" class="btn soft">下载备份 (.json)</button>
+          </div>
+          <div class="g2">
+            <button id="btn-imp-json" type="button" class="btn soft">导入文件恢复</button>
+            <button id="btn-backup-code" type="button" class="btn soft">复制/粘贴备份码</button>
+          </div>
+          <input id="imp-file-inp" type="file" accept=".json,application/json,text/plain" class="hidden" />
+          <div class="sec-s">提示：iPhone 桌面全屏模式下若下载受限，可直接用「导出文字纪念册」一键复制全文，或用「复制/粘贴备份码」存到手机备忘录。</div>
+        </div>
+
         <!-- 谨慎重置 -->
         <div class="card stack" style="gap:9px">
           <div class="sec-t">典藏状态管理</div>
@@ -1231,6 +1252,40 @@
       clearTimeout(toastT); toastT = setTimeout(() => el.classList.remove('show'), 2600);
     }
 
+    async function copyText(str) {
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(str);
+          return true;
+        }
+      } catch {}
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = str;
+        ta.setAttribute('readonly', '');
+        ta.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0';
+        document.body.appendChild(ta);
+        ta.select();
+        ta.setSelectionRange(0, str.length);
+        const ok = document.execCommand('copy');
+        document.body.removeChild(ta);
+        return ok;
+      } catch { return false; }
+    }
+
+    function downloadFile(filename, content, mime) {
+      const data = mime.includes('text/plain') ? '\uFEFF' + content : content;
+      const blob = new Blob([data], { type: mime });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 1800);
+    }
+
     function voiceHTML(uid, text) {
       const sec = Math.max(6, Math.min(18, Math.round(text.length / 4.6)));
       const st = vState[uid];
@@ -1604,6 +1659,102 @@
       </div>`;
     }
 
+    function bindMineManageActions(c) {
+      const editBtn = $('btn-edit-mine');
+      if (editBtn) {
+        editBtn.onclick = () => openEditMineCapsuleModal(c.id);
+      }
+      const delBtn = $('btn-del-mine');
+      if (delBtn) {
+        let armed = false;
+        let armTimer = null;
+        delBtn.onclick = () => {
+          if (!armed) {
+            armed = true;
+            SFX.play('tap');
+            delBtn.textContent = '再点确认删除';
+            armTimer = setTimeout(() => {
+              armed = false;
+              if ($('btn-del-mine')) $('btn-del-mine').textContent = '删除这封胶囊';
+            }, 3800);
+            return;
+          }
+          clearTimeout(armTimer);
+          ST.userWax = ST.userWax.filter(x => x.id !== c.id);
+          delete ST.opened[c.id];
+          wLS(LS.UW, ST.userWax);
+          wLS(LS.OPEN, ST.opened);
+          SFX.play('paper');
+          closeModal();
+          renderWaxTab();
+          toast('已删除这封自封胶囊');
+        };
+      }
+    }
+
+    function openEditMineCapsuleModal(id) {
+      const c = ST.userWax.find(x => x.id === id);
+      if (!c) return;
+      SFX.play('tap');
+      const addDays = n => { const d = new Date(); d.setDate(d.getDate() + n); return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`; };
+      let waxCol = c.wax || 'crimson';
+      let immediate = !c.unlockDate;
+      const cleanTitle = (c.title || '').replace(/^《|》$/g, '');
+      const m = $('modal');
+      m.innerHTML = `<div class="sheet stack">
+        <div class="row">
+          <span class="sec-t">修改我的火漆胶囊</span>
+          <button type="button" id="m-close" class="pill dim" style="padding:4px 11px">取消</button>
+        </div>
+        <input id="ec-title" class="inp" type="text" value="${esc(cleanTitle)}" placeholder="信件标题" />
+        <textarea id="ec-body" rows="5" class="inp" placeholder="修改你想写的内容…">${esc(c.body)}</textarea>
+        <div>
+          <div class="sec-s" style="margin-bottom:6px">启封方式</div>
+          <div class="mode-seg" style="margin-top:0">
+            <button type="button" id="ec-m-now" class="${immediate ? 'on' : ''}">随时可拆</button>
+            <button type="button" id="ec-m-date" class="${!immediate ? 'on' : ''}">设定未来日期</button>
+          </div>
+          <input id="ec-date" class="inp ${immediate ? 'hidden' : ''}" style="margin-top:8px" type="date" value="${esc(c.unlockDate || addDays(14))}" />
+        </div>
+        <div>
+          <div class="sec-s" style="margin-bottom:6px">火漆印章</div>
+          <div style="display:flex;gap:12px;padding:3px 2px">
+            <button type="button" data-ewcol="crimson" class="wax-seal wax-crimson" style="outline:${waxCol==='crimson'?'2px solid var(--gold-hi)':'none'}">绯红</button>
+            <button type="button" data-ewcol="gold" class="wax-seal wax-gold" style="outline:${waxCol==='gold'?'2px solid var(--gold-hi)':'none'}">鎏金</button>
+            <button type="button" data-ewcol="blue" class="wax-seal wax-blue" style="outline:${waxCol==='blue'?'2px solid var(--gold-hi)':'none'}">午夜</button>
+            <button type="button" data-ewcol="black" class="wax-seal wax-black" style="outline:${waxCol==='black'?'2px solid var(--gold-hi)':'none'}">黑金</button>
+          </div>
+        </div>
+        <button id="ec-save" type="button" class="btn gold">保存修改并重新按牢火漆</button>
+      </div>`;
+      m.classList.remove('hidden');
+      $('m-close').onclick = () => openLetterModal(c.id, true);
+      $('ec-m-now').onclick = () => { SFX.play('tap'); immediate = true; $('ec-m-now').classList.add('on'); $('ec-m-date').classList.remove('on'); $('ec-date').classList.add('hidden'); };
+      $('ec-m-date').onclick = () => { SFX.play('tap'); immediate = false; $('ec-m-date').classList.add('on'); $('ec-m-now').classList.remove('on'); $('ec-date').classList.remove('hidden'); };
+      m.querySelectorAll('[data-ewcol]').forEach(b => {
+        b.onclick = () => {
+          SFX.play('tap'); waxCol = b.dataset.ewcol;
+          m.querySelectorAll('[data-ewcol]').forEach(x => x.style.outline = x.dataset.ewcol === waxCol ? '2px solid var(--gold-hi)' : 'none');
+        };
+      });
+      $('ec-save').onclick = () => {
+        const newTitle = $('ec-title').value.trim() || '写给未来的悄悄话';
+        const newBody = $('ec-body').value.trim();
+        if (!newBody) { toast('内容不能为空哦'); return; }
+        const newDate = immediate ? null : ($('ec-date').value || addDays(14));
+        c.title = `《${newTitle.replace(/[《》]/g, '')}》`;
+        c.body = newBody;
+        c.unlockDate = newDate;
+        c.sub = newDate ? `约定 ${newDate} 启封` : '随时可拆 · 我的专属封存';
+        c.wax = waxCol;
+        wLS(LS.UW, ST.userWax);
+        SFX.play('stamp');
+        renderWaxTab();
+        openLetterModal(c.id, true);
+        toast('已保存对这封胶囊的修改');
+      };
+    }
+
     function openLetterModal(id, isMine) {
       const c = isMine ? ST.userWax.find(x => x.id === id) : LETTERS.find(x => x.id === id);
       if (!c) return;
@@ -1611,6 +1762,12 @@
       const rem = c.unlockDate ? daysUntil(c.unlockDate) : 0;
       const locked = !opened && rem > 0;
       const m = $('modal');
+
+      const mineBarHTML = isMine ? `
+        <div class="g2" style="margin-top:2px">
+          <button type="button" id="btn-edit-mine" class="btn soft">修改内容</button>
+          <button type="button" id="btn-del-mine" class="btn danger">删除这封胶囊</button>
+        </div>` : '';
 
       const renderOpened = (isEarly) => {
         m.innerHTML = `<div class="sheet stack">
@@ -1631,9 +1788,11 @@
             ${c.voice ? voiceHTML('lv_' + c.id, c.voice) : ''}
             <div id="special-slot">${buildSpecialBlock(c)}</div>
           </div>
+          ${mineBarHTML}
         </div>`;
         $('m-close').onclick = closeModal;
         bindSpecialActions(c, () => renderOpened(isEarly));
+        if (isMine) bindMineManageActions(c);
       };
 
       if (opened) {
@@ -1650,15 +1809,17 @@
         </div>
         <div class="seal-stage" id="seal-stage">
           <div style="font-size:16px;font-weight:600;color:var(--text);text-align:center;line-height:1.45">${esc(c.title)}</div>
-          <div class="sec-s" style="margin-top:6px;text-align:center">${locked ? `约定启封日：${c.unlockDate}` : '轻触下方火漆印章，碎蜡展开迟川的来信'}</div>
+          <div class="sec-s" style="margin-top:6px;text-align:center">${locked ? `约定启封日：${c.unlockDate}` : '轻触下方火漆印章，碎蜡展开信件'}</div>
           <button id="break-seal-btn" type="button" class="wax-seal big-seal wax-${c.wax || 'crimson'}" style="margin-top:22px">${esc(c.emblem || 'CYRUS')}</button>
           <div id="seal-hint" style="font-size:11px;color:var(--muted);margin-top:14px">${locked ? '尚未到达预定节日日期' : '点击火漆印章碎裂启封'}</div>
         </div>
         <div id="pry-indulge" class="hidden" style="padding:10px 12px;border-radius:13px;background:rgba(214,180,124,0.1);border:1px solid rgba(214,180,124,0.34);font-size:12px;color:var(--gold-hi);line-height:1.65"></div>
         ${locked ? `<button id="pry-early-btn" type="button" class="btn soft">叫声“爸爸”，悄悄撬开火漆</button>` : ''}
+        ${mineBarHTML}
       </div>`;
       m.classList.remove('hidden');
       $('m-close').onclick = closeModal;
+      if (isMine) bindMineManageActions(c);
 
       let unlockedEarly = false;
       const crackAndOpen = (earlyFlag) => {
@@ -2061,6 +2222,182 @@
       };
     }
 
+    /* ========== 数据导出、可读纪念册生成与导入恢复 ========== */
+    function buildBackupJSON() {
+      return JSON.stringify({
+        app: 'cyrus_capsule_v2',
+        exportedAt: fmtDT(Date.now()),
+        data: {
+          opened: ST.opened,
+          coupons: ST.coupons,
+          proposal: ST.proposal,
+          userWax: ST.userWax,
+          bpDone: ST.bpDone,
+          userBp: ST.userBp,
+          vents: ST.vents
+        }
+      }, null, 2);
+    }
+
+    function applyBackupObject(parsed) {
+      const d = (parsed && parsed.data && typeof parsed.data === 'object') ? parsed.data : parsed;
+      if (!d || typeof d !== 'object') throw new Error('备份格式不正确');
+      const hasAny = ['opened', 'coupons', 'proposal', 'userWax', 'bpDone', 'userBp', 'vents'].some(k => k in d);
+      if (!hasAny) throw new Error('未识别到胶囊备份数据');
+
+      if (d.opened && typeof d.opened === 'object') { ST.opened = d.opened; wLS(LS.OPEN, ST.opened); }
+      if (d.coupons && typeof d.coupons === 'object') { ST.coupons = d.coupons; wLS(LS.CPN, ST.coupons); }
+      if (d.proposal && typeof d.proposal === 'object') {
+        ST.proposal = Object.assign({ accepted: false, ts: 0, no: '', ringOpened: false }, d.proposal);
+        wLS(LS.PROP, ST.proposal);
+      }
+      if (Array.isArray(d.userWax)) { ST.userWax = d.userWax; wLS(LS.UW, ST.userWax); }
+      if (d.bpDone && typeof d.bpDone === 'object') { ST.bpDone = d.bpDone; wLS(LS.BPD, ST.bpDone); }
+      if (Array.isArray(d.userBp)) { ST.userBp = d.userBp; wLS(LS.BPU, ST.userBp); }
+      if (Array.isArray(d.vents)) { ST.vents = d.vents; wLS(LS.VNT, ST.vents); }
+
+      renderWaxTab();
+      renderAidTab();
+      renderBpTab();
+      renderSettings();
+    }
+
+    function buildChronicleText() {
+      const lines = [];
+      lines.push('════════════════════════════════════');
+      lines.push('   迟川 × 迟琰 · 繁星封蜡胶囊纪念册');
+      lines.push(`   导出时间：${fmtDT(Date.now())}`);
+      lines.push('════════════════════════════════════\n');
+
+      if (ST.proposal && ST.proposal.accepted) {
+        lines.push('【一、余生誓约留念卡】');
+        lines.push(`誓约落定时刻：${fmtDT(ST.proposal.ts)}`);
+        lines.push(`专属编号：${ST.proposal.no}`);
+        lines.push('双方落款：迟川 (Cyrus) ♥ 迟琰 (Chi Yan)\n');
+      }
+
+      lines.push(`【二、我封存的火漆胶囊（共 ${ST.userWax.length} 封）】`);
+      if (!ST.userWax.length) {
+        lines.push('（暂无自封胶囊）\n');
+      } else {
+        ST.userWax.forEach((c, idx) => {
+          lines.push(`${idx + 1}. ${c.title}`);
+          lines.push(`   封存时间：${fmtDT(c.ts)} | ${c.unlockDate ? '约定启封：' + c.unlockDate : '随时可拆'}`);
+          lines.push(`   正文：\n${c.body}`);
+          if (c.dadNote) lines.push(`   迟川的暗金附笺：${c.dadNote}`);
+          lines.push('');
+        });
+      }
+
+      const bps = allBps();
+      const doneBps = bps.filter(b => ST.bpDone[b.id]);
+      lines.push(`【三、已兑现的共同蓝图（${doneBps.length} / ${bps.length} 项）】`);
+      if (!doneBps.length) {
+        lines.push('（暂未盖章兑现的蓝图）\n');
+      } else {
+        doneBps.forEach((b, idx) => {
+          const d = ST.bpDone[b.id];
+          lines.push(`${idx + 1}. ${b.title} [${b.tag || '共同蓝图'}]`);
+          lines.push(`   兑现时间：${fmtDT(d.ts)}`);
+          if (d.mood) lines.push(`   迟琰记录：${d.mood}`);
+          lines.push(`   迟川手写批注：${d.note || b.note}\n`);
+        });
+      }
+
+      const usedCps = COUPONS.filter(cp => ST.coupons[cp.id]);
+      if (usedCps.length) {
+        lines.push(`【四、已核销的迟川特权券（${usedCps.length} / ${COUPONS.length} 张）】`);
+        usedCps.forEach((cp, idx) => {
+          lines.push(`${idx + 1}. ${cp.title}（核销于 ${fmtDT(ST.coupons[cp.id])}）`);
+          lines.push(`   迟川回应：${cp.reply}\n`);
+        });
+      }
+
+      lines.push(`【五、情绪急救箱 · 历史倾诉与回复存档（共 ${ST.vents.length} 条）】`);
+      if (!ST.vents.length) {
+        lines.push('（暂无倾诉存档）\n');
+      } else {
+        ST.vents.forEach((v, idx) => {
+          lines.push(`${idx + 1}. [${v.tag || '倾诉'}] ${fmtDT(v.ts)}`);
+          lines.push(`   迟琰：${v.userText}`);
+          lines.push(`   迟川：${v.reply}`);
+          if (v.voice) lines.push(`   迟川语音：${v.voice}`);
+          lines.push('');
+        });
+      }
+
+      lines.push('—— 岁岁年年，迟川始终在迟琰身边。');
+      return lines.join('\n');
+    }
+
+    function openChronicleModal() {
+      SFX.play('paper');
+      const txt = buildChronicleText();
+      const m = $('modal');
+      m.innerHTML = `<div class="sheet stack">
+        <div class="row">
+          <span class="sec-t">文字纪念册预览与导出</span>
+          <button type="button" id="m-close" class="pill dim" style="padding:4px 11px">关闭 ✕</button>
+        </div>
+        <div class="sec-s">已自动汇总誓约、自封胶囊、已兑现蓝图、特权券与全部倾诉回复。</div>
+        <textarea id="chron-txt" rows="11" class="inp" readonly style="font-size:11.5px;line-height:1.68">${esc(txt)}</textarea>
+        <div class="g2">
+          <button type="button" id="btn-copy-chron" class="btn gold">一键复制全文</button>
+          <button type="button" id="btn-dl-chron" class="btn soft">下载 .txt 文件</button>
+        </div>
+      </div>`;
+      m.classList.remove('hidden');
+      $('m-close').onclick = closeModal;
+      $('btn-copy-chron').onclick = async () => {
+        const ok = await copyText(txt);
+        SFX.play('chime');
+        toast(ok ? '已复制纪念册全文，可粘贴到备忘录珍藏' : '请长按上方文本框全选复制');
+      };
+      $('btn-dl-chron').onclick = () => {
+        SFX.play('tap');
+        downloadFile(`迟川胶囊纪念册_${todayISO().replace(/-/g, '')}.txt`, txt, 'text/plain;charset=utf-8');
+        toast('已开始下载文字纪念册 (.txt)');
+      };
+    }
+
+    function openBackupCodeModal() {
+      SFX.play('tap');
+      const jsonStr = buildBackupJSON();
+      const m = $('modal');
+      m.innerHTML = `<div class="sheet stack">
+        <div class="row">
+          <span class="sec-t">备份码复制 / 粘贴恢复</span>
+          <button type="button" id="m-close" class="pill dim" style="padding:4px 11px">关闭 ✕</button>
+        </div>
+        <div class="sec-s">换手机或清缓存前，点「复制备份码」存进备忘录；需要恢复时把备份码粘进下方框再点恢复即可。</div>
+        <button type="button" id="btn-copy-code" class="btn gold">一键复制当前全部备份码</button>
+        <div style="border-top:1px solid var(--line-soft);padding-top:10px" class="stack">
+          <div class="sec-s">在此粘贴旧备份码以恢复数据：</div>
+          <textarea id="paste-code-inp" rows="4" class="inp" placeholder='粘贴以 {"app":"cyrus_capsule_v2"... 开头的完整备份内容'></textarea>
+          <button type="button" id="btn-apply-code" class="btn soft">立即从备份码恢复</button>
+        </div>
+      </div>`;
+      m.classList.remove('hidden');
+      $('m-close').onclick = closeModal;
+      $('btn-copy-code').onclick = async () => {
+        const ok = await copyText(jsonStr);
+        SFX.play('chime');
+        toast(ok ? '已复制完整备份码，快粘贴到手机备忘录存好吧' : '复制失败，请使用「下载备份 (.json)」');
+      };
+      $('btn-apply-code').onclick = () => {
+        const raw = $('paste-code-inp').value.trim();
+        if (!raw) { toast('先在输入框里粘贴备份码哦'); return; }
+        try {
+          applyBackupObject(JSON.parse(raw));
+          SFX.play('chime');
+          closeModal();
+          toast('✦ 已成功恢复全部胶囊、蓝图与倾诉存档！');
+        } catch (err) {
+          toast('恢复失败：' + (err.message || '备份码不完整'));
+        }
+      };
+    }
+
     function syncAmbUI() {
       const on = SFX.isAmb();
       $('top-amb-btn').innerHTML = svg('rain', 16);
@@ -2213,6 +2550,35 @@
           $('api-msg').innerHTML = `<span style="color:#f5b3bc">✕ 连接失败：${esc(err.message)}</span>`;
         } finally { btn.disabled = false; btn.textContent = '一键测试连接'; }
       };
+
+      /* 数据导出与备份恢复事件 */
+      $('btn-exp-txt').onclick = openChronicleModal;
+      $('btn-exp-json').onclick = () => {
+        SFX.play('chime');
+        downloadFile(`迟川胶囊备份_${todayISO().replace(/-/g, '')}.json`, buildBackupJSON(), 'application/json;charset=utf-8');
+        toast('已开始下载完整备份 (.json)');
+      };
+      $('btn-imp-json').onclick = () => {
+        SFX.play('tap');
+        $('imp-file-inp').value = '';
+        $('imp-file-inp').click();
+      };
+      $('imp-file-inp').onchange = e => {
+        const file = e.target.files && e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = () => {
+          try {
+            applyBackupObject(JSON.parse(String(reader.result || '')));
+            SFX.play('chime');
+            toast('✦ 备份文件导入成功，记录已全部恢复！');
+          } catch (err) {
+            toast('导入失败：' + (err.message || '请确认选择的是 .json 备份文件'));
+          }
+        };
+        reader.readAsText(file, 'utf-8');
+      };
+      $('btn-backup-code').onclick = openBackupCodeModal;
 
       $('btn-reset-wax').onclick = () => {
         if (!ST.resetArmed) {
